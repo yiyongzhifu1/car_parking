@@ -18,16 +18,59 @@ static GOptionEntry entries[] = {
 uint32_t last_frame_time = 0;
 uint32_t cur_frame_time = 0;
 
-//log info, display frame message
-void lidarCallback(const LidarDecodedFrame<LidarPointXYZIRT>  &frame) {  
-  cur_frame_time = GetMicroTickCount();
-  if (last_frame_time == 0) last_frame_time = GetMicroTickCount();
-  if (cur_frame_time - last_frame_time > kMaxTimeInterval) {
-    printf("Time between last frame and cur frame is: %d us\n", (cur_frame_time - last_frame_time));
+template <typename... Args>
+std::string string_format(const std::string& format, Args... args) {
+  int size_s = std::snprintf(nullptr, 0, format.c_str(), args...) + 1;
+  if (size_s <= 0) {
+    throw std::runtime_error("Error during formatting.");
   }
-  last_frame_time = cur_frame_time;
-  printf("frame:%d points:%u packet:%d start time:%lf end time:%lf\n",frame.frame_index, frame.points_num, frame.packet_num, frame.points[0].timestamp, frame.points[frame.points_num - 1].timestamp) ;
+  auto size = static_cast<size_t>(size_s);
+  std::unique_ptr<char[]> buf(new char[size]);
+  std::snprintf(buf.get(), size, format.c_str(), args...);
+  return std::string(buf.get(), buf.get() + size - 1);
 }
+
+//log info, display frame message
+
+void lidarUdpPocketCallback(const UdpFrame_t &udpFrame, double timestamp) {  
+
+    //printf("udp pocket size: %ld, %f\n", udpFrame.size(), timestamp);
+
+    int sockfd;  
+    struct sockaddr_in servaddr;  
+  
+    // 创建UDP套接字  
+    if ((sockfd = socket(AF_INET, SOCK_DGRAM, 0)) < 0) {  
+        std::cerr << "Socket creation failed" << std::endl;
+    }
+    memset(&servaddr, 0, sizeof(servaddr));  
+  
+    servaddr.sin_family = AF_INET; 
+    servaddr.sin_port = htons(1410);
+  
+    if(inet_pton(AF_INET, "192.168.10.120", &servaddr.sin_addr) <= 0) {                // address 192.168.10.120
+        std::cerr << "Invalid address/ Address not supported" << std::endl;
+    }  
+    // 要发送的数据  
+    int len;
+    if(1){
+        for(int i = 0; i < udpFrame.size(); i++){
+            len = sendto(sockfd, udpFrame[i].buffer, udpFrame[i].packet_len, MSG_CONFIRM, (const struct sockaddr *)&servaddr, sizeof(servaddr));        
+            if (len < 0) {  
+                  std::cerr << "udp upload lidar strean, Sendto failed "<< std::endl;
+            }
+        }
+        std::cerr << "send udp pcket size= " << udpFrame.size() << std::endl;
+    }
+    close(sockfd); 
+    
+    hesai::lidar::PcapSaver saver;
+    if(0){
+       std::string filename = string_format("%s/%s/lidar0.pcap",  "./path", "folder_name");
+       saver.Save(filename, udpFrame, 2368);
+    }
+}
+
 // Determines whether the PCAP is finished playing
 bool IsPlayEnded(HesaiLidarSdk<LidarPointXYZIRT>& sdk)
 {
@@ -63,7 +106,7 @@ int main(int argc, char *argv[])
   sample.lidar_ptr_->source_->SetSocketBufferSize(socket_buffer);
 
   //assign callback fuction
-  sample.RegRecvCallback(lidarCallback);
+  sample.RegRecvCallback(lidarUdpPocketCallback);
 
   sample.Start();
 
